@@ -26,6 +26,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 )
 
 // Relay manages MAVLink connections and data forwarding to sinks
@@ -108,10 +109,32 @@ func (r *Relay) Start(ctx context.Context) error {
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", r.config.Relay.GRPCPort))
 	if err != nil {
-		return fmt.Errorf("failed to listen on port %d: %w", r.config.Relay.GRPCPort, err)
+		slog.LogAttrs(ctx, slog.LevelError, "ErrCreatingTCPListener", slog.String("error", err.Error()))
+		return ErrCreatingTCPListener
 	}
 
-	r.grpcServer = grpc.NewServer()
+	var creds credentials.TransportCredentials
+	var homeDir string
+
+	creds, err = credentials.NewServerTLSFromFile(r.config.TLSCertPath, r.config.TLSKeyPath)
+	if r.config.Debug {
+		homeDir, err = os.UserHomeDir()
+		if err != nil {
+			slog.LogAttrs(ctx, slog.LevelError, ErrGettingHomeDir.Error(), slog.String("error", err.Error()))
+			return ErrGettingHomeDir
+		}
+
+		certPath := fmt.Sprintf("%s/%s", homeDir, DebugTLSCertPath)
+		keyPath := fmt.Sprintf("%s/%s", homeDir, DebugTLSKeyPath)
+		creds, err = credentials.NewServerTLSFromFile(certPath, keyPath)
+	}
+
+	if err != nil {
+		slog.LogAttrs(ctx, slog.LevelError, "ErrCreatingTLSCredentials", slog.String("error", err.Error()))
+		return ErrCreatingTLSCredentials
+	}
+
+	r.grpcServer = grpc.NewServer(grpc.Creds(creds))
 
 	// Register gRPC servers
 	relayv1.RegisterRelayControlServer(r.grpcServer, r)
@@ -130,7 +153,7 @@ func (r *Relay) Start(ctx context.Context) error {
 	http.Handle("/healthz", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"ok"}`))
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	}))
 	http.Handle("/readyz", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if !r.ready() {
@@ -139,7 +162,7 @@ func (r *Relay) Start(ctx context.Context) error {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"ok"}`))
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	}))
 
 	metricsServer := &http.Server{
