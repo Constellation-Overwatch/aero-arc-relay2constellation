@@ -2,7 +2,10 @@ relay:
   buffer_size: 1000
 
 mavlink:
-  dialect: "common"  # common, ardupilot, px4, etc.
+  # Dialect options: common, minimal, ardupilot, standard, paparazzi, px4, development, all
+  # For PX4 firmware: use "all" (includes all messages) or "px4" (development dialect)
+  # For ArduPilot firmware: use "ardupilot"
+  dialect: "all"
   endpoints:
     - name: "drone-1"
       protocol: "udp"
